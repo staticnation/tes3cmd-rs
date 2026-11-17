@@ -1,0 +1,20 @@
+[package]
+name = "tes3cmd"
+version = "0.40.0-pre.2"
+edition = "2024"
+description = "tes3cmd, the TES3 plugin tool, in Rust: its commands and flags, without Perl"
+license = "MIT"
+repository = "https://github.com/staticnation/tes3cmd-rs"
+rust-version = "1.85"
+
+[lib]
+name = "tes3cmd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tes3cmd"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]

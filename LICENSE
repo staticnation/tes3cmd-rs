@@ -1,6 +1,7 @@
 MIT License
 
-Copyright (c) 2026 staticnation
+Copyright (c) 2016 John Moonsugar (tes3cmd, https://github.com/john-moonsugar/tes3cmd)
+Copyright (c) 2026 StaticNation (this port to Rust)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
