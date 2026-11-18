@@ -270,6 +270,25 @@ pub fn run_in(
     run(argv, out, err)
 }
 
+/// [`run_in`] over an overlay: `dir` is the run's `Data Files` (in a Morrowind folder of its
+/// own, with the `Morrowind.ini` naming the active plugins), and `files` the plugins it may
+/// need that are elsewhere - by name, where they are (another program's data folders, OpenMW's
+/// VFS). Those are read in place and never changed: a write to one, its removal or a new
+/// date goes to a private copy under the run's folder (`tes3cmd/overlay`), which the rest of
+/// the run reads instead. So a master is never copied for the run, and never written.
+pub fn run_over(
+    dir: &std::path::Path,
+    files: std::collections::HashMap<String, std::path::PathBuf>,
+    argv: &[String],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let root = dir.parent().unwrap_or(dir);
+    let _run_folder = crate::fsx::enter(dir);
+    let _overlay = crate::fsx::overlay(root, files);
+    run(argv, out, err)
+}
+
 pub fn run(argv: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let debug = argv
         .iter()

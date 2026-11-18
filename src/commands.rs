@@ -30,9 +30,8 @@ fn times(path: &str) -> Option<(std::time::SystemTime, std::time::SystemTime)> {
 
 fn set_times(path: &str, t: Option<(std::time::SystemTime, std::time::SystemTime)>) {
     if let Some((a, m)) = t
-        && let Ok(f) = std::fs::File::options()
-            .write(true)
-            .open(crate::fsx::at(path))
+        && let Ok(w) = crate::fsx::at_write(path, true)
+        && let Ok(f) = std::fs::File::options().write(true).open(w)
     {
         let _ = f.set_times(std::fs::FileTimes::new().set_accessed(a).set_modified(m));
     }
@@ -1086,9 +1085,8 @@ pub fn dump(ctx: &mut Ctx, o: &DumpOptions, st: &mut crate::tostr::State, plugin
                 let mut b = Vec::new();
                 rec.write(&mut b);
                 use std::io::Write as _;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(crate::fsx::at(path))
+                if let Ok(w) = crate::fsx::at_write(path, true)
+                    && let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(w)
                 {
                     let _ = f.write_all(&b);
                 }

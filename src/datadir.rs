@@ -114,9 +114,12 @@ impl Install {
         if self.listing.is_none() {
             self.listing = list_files(&self.datadir);
         }
-        let l = self.listing.as_ref()?;
-        l.get(&name.to_lowercase())
+        // The run's own Data Files first, then (an overlay, `cli::run_over`) the caller's.
+        self.listing
+            .as_ref()
+            .and_then(|l| l.get(&name.to_lowercase()))
             .map(|n| PathBuf::from(format!("{}/{n}", self.datadir)))
+            .or_else(|| crate::fsx::overlay_file(name))
     }
 
     /// `load_order`: the ini's game files that are there, by date, masters first.

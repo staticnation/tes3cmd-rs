@@ -87,9 +87,7 @@ fn times(p: &str) -> Option<std::fs::FileTimes> {
 fn set_times(p: &str, t: &Option<std::fs::FileTimes>) {
     if let (Some(t), Ok(f)) = (
         t,
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(crate::fsx::at(p)),
+        crate::fsx::at_write(p, true).and_then(|w| std::fs::OpenOptions::new().write(true).open(w)),
     ) {
         let _ = f.set_times(*t);
     }

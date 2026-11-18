@@ -36,7 +36,13 @@ tes3cmd's own usage for clean.
 As a library, `tes3cmd::cli::run(argv, out, err)` is the command line with its output in two
 writers, and `tes3cmd::cli::run_in(dir, argv, out, err)` the same as if started in `dir`: for a
 program that runs it inside itself, whose threads share one working folder (Wraithguard's Tools
-page). Both answer the exit code; neither exits the process.
+page). `tes3cmd::cli::run_over(dir, files, argv, out, err)` runs in `dir` (a `Data Files` in a
+Morrowind folder of the caller's) with the plugins it may need elsewhere named in `files`, by
+name: they are read where they are (another program's data folders, OpenMW's VFS), so no master
+is copied, and never changed there. A write, a rename, a removal or a new date on one goes to a
+private copy under the run's `tes3cmd/overlay`, which the rest of the run reads in its place:
+`fixit` synchronizing the headers of every active plugin, or `resetdates`, leave the caller's
+Morrowind.esm as it was. All three answer the exit code; none exits the process.
 
 ## How it is held to tes3cmd
 
@@ -110,7 +116,9 @@ macOS, keeps each system's program, and on Linux runs every case against the rel
   - A cell rebuilt after cleaning its references loses its header flags.
 - **The master cache.** tes3cmd keeps parsed masters in `tes3cmd/cache` as Perl `Storable`
   files, which this port cannot read; it reads the masters each run (as `--no-cache` does), so it
-  never says "Loaded cached Master".
+  never says "Loaded cached Master". It keeps none of its own: the cache holds every record of
+  the master, so reading it back costs what reading the master does, which only pays where
+  parsing is slow, as it is in Perl.
 - **Perl's own wording.** Where tes3cmd dies inside Perl ("Can't locate object method",
   uninitialized values), the port prints the same text but not Perl's "at FILE line N." place.
 - **The order of masters.** tes3cmd walks a plugin's masters in Perl's hash order, which changes
