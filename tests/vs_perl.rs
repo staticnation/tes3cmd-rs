@@ -150,8 +150,22 @@ fn lay_out(root: &Path, case: &Case) -> PathBuf {
         "[Game Files]\r\nGameFile0=Morrowind.esm\r\n",
     )
     .unwrap();
+    // A case's own Morrowind.ini goes beside Data Files; each plugin is dated a day after the
+    // one before it, so the load order (by date) is the same in both copies.
+    let day = std::time::Duration::from_secs(86400);
+    let mut t = std::time::UNIX_EPOCH + day * 18262;
     for (n, b) in &case.files {
-        std::fs::write(data.join(n), b).unwrap();
+        let path = if *n == "Morrowind.ini" {
+            root.join(n)
+        } else {
+            data.join(n)
+        };
+        std::fs::write(&path, b).unwrap();
+        if n != &"Morrowind.ini" {
+            let f = std::fs::File::options().write(true).open(&path).unwrap();
+            f.set_modified(t).unwrap();
+            t += day;
+        }
     }
     data
 }
@@ -198,7 +212,9 @@ fn unplace(s: &str) -> String {
     out
 }
 
-fn run_both(case: &Case) -> Option<(String, String)> {
+/// `sort_err`: standard error compared as a set of lines, for a command that walks Perl hashes
+/// (whose order changes from run to run) while it warns.
+fn run_both_with(case: &Case, sort_err: bool) -> Option<(String, String)> {
     let mut theirs = tes3cmd()?;
     let base = std::env::temp_dir().join(format!("t3rs-{}-{}", case.name, std::process::id()));
     let (pd, rd) = (base.join("perl"), base.join("rust"));
@@ -225,6 +241,16 @@ fn run_both(case: &Case) -> Option<(String, String)> {
         unplace(&root(&perl.stderr, &pd)),
         unplace(&root(&rust.stderr, &rd)),
     );
+    let (pe, re) = if sort_err {
+        let sorted = |s: &str| {
+            let mut l: Vec<&str> = s.lines().collect();
+            l.sort();
+            l.join("\n")
+        };
+        (sorted(&pe), sorted(&re))
+    } else {
+        (pe, re)
+    };
     let mut report = String::new();
     if po != ro {
         report += &format!("standard output differs:\n--- perl\n{po}\n--- port\n{ro}\n");
@@ -273,7 +299,11 @@ fn run_both(case: &Case) -> Option<(String, String)> {
 }
 
 fn check(case: Case) {
-    match run_both(&case) {
+    check_with(case, false)
+}
+
+fn check_with(case: Case, sort_err: bool) {
+    match run_both_with(&case, sort_err) {
         None => eprintln!(
             "skipped {}: set TES3CMD_PL to tes3cmd's Perl script (and have perl), or TES3CMD_EXE to tes3cmd's program",
             case.name
@@ -759,4 +789,835 @@ fn real_plugins() {
         files,
         args,
     });
+}
+
+// ---- the other commands ----
+
+fn dial(id: &str, ty: u8) -> Vec<u8> {
+    rec(b"DIAL", 0, &[sub(b"NAME", &z(id)), sub(b"DATA", &[ty])])
+}
+
+#[test]
+fn header_shown_and_changed() {
+    for (name, args) in [
+        ("header-plain", vec!["header", "Plug.esp", "Test.esm"]),
+        (
+            "header-multiline",
+            vec!["header", "--multiline", "Plug.esp"],
+        ),
+        ("header-verbose", vec!["header", "-v", "Plug.esp"]),
+        (
+            "header-author",
+            vec!["header", "--author", "Somebody", "Plug.esp"],
+        ),
+        (
+            "header-author-plus",
+            vec![
+                "header",
+                "--author",
+                "+ and friends",
+                "--description",
+                "Line one\\nLine two",
+                "Plug.esp",
+            ],
+        ),
+        (
+            "header-count",
+            vec!["header", "--update-record-count", "Plug.esp"],
+        ),
+        (
+            "header-sync",
+            vec!["header", "--synchronize", "--hide-backups", "Plug.esp"],
+        ),
+        (
+            "header-backup-skipped",
+            vec!["header", "--update-masters", "Plug~1.esp"],
+        ),
+    ] {
+        let m = master_esm();
+        // A wrong record count and a wrong master size, for the updates to find.
+        let p = plugin(
+            &[("Test.esm", 1234)],
+            Some(9),
+            &[stat("rock_09", "r\\rock9.nif", 0)],
+        );
+        check(Case {
+            name,
+            files: vec![("Test.esm", m), ("Plug.esp", p.clone()), ("Plug~1.esp", p)],
+            args,
+        });
+    }
+}
+
+#[test]
+fn esp_and_esm() {
+    for (name, args) in [
+        ("esm-from-esp", vec!["esm", "Plug.esp"]),
+        ("esp-from-esm", vec!["esp", "Test.esm"]),
+        ("esm-exists", vec!["esm", "Other.esp"]),
+        (
+            "esm-exists-overwrite",
+            vec!["esm", "--overwrite", "Other.esp"],
+        ),
+        ("esm-wrong-input", vec!["esm", "Test.esm"]),
+    ] {
+        let mut c = with_master(name, vec![stat("rock_09", "r\\rock9.nif", 0)], args);
+        c.files.push(("Other.esp", plugin(&[], None, &[])));
+        c.files.push(("Other.esm", plugin(&[], None, &[])));
+        check(c);
+    }
+}
+
+#[test]
+fn common_records() {
+    check(with_master(
+        "common",
+        vec![
+            stat("rock_01", "r\\rock.nif", 0),
+            stat("New_Thing", "n.nif", 0),
+            gmst("fWerewolfSpeed", (b"FLTV", f32s(&[1.0]))),
+        ],
+        vec!["common", "Plug.esp", "Test.esm"],
+    ));
+}
+
+#[test]
+fn active_list() {
+    let mut c = with_master(
+        "active-list",
+        vec![stat("rock_09", "r\\rock9.nif", 0)],
+        vec!["active"],
+    );
+    c.files.push(("Morrowind.esm", plugin(&[], None, &[])));
+    check(c);
+}
+
+/// `active --on` / `--off`: tes3cmd 0.40-PRE-RELEASE-2 dies in `write_gamefiles` ("Undefined
+/// subroutine &TES3::Util::move"), leaving `Morrowind.ini.tmp` and the ini as it was. The port
+/// does what the command says (README, "Where it differs"), so it is checked on its own.
+#[test]
+fn active_on_and_off() {
+    let root = std::env::temp_dir().join(format!("t3rs-active-{}", std::process::id()));
+    let mut c = with_master("active-onoff", vec![], vec![]);
+    c.files.push(("Morrowind.esm", plugin(&[], None, &[])));
+    let data = lay_out(&root, &c);
+    std::fs::write(root.join("Morrowind.ini"), "[General]\r\nX=1\r\n[Game Files]\r\nGameFile0=Morrowind.esm\r\n[Archives]\r\nArchive 0=a.bsa\r\n").unwrap();
+    let run = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_tes3cmd"))
+            .args(args)
+            .current_dir(&data)
+            .env("PWD", &data)
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            o.status.code(),
+        )
+    };
+    let ini = || std::fs::read_to_string(root.join("Morrowind.ini")).unwrap();
+    assert_eq!(
+        run(&["active", "--on", "Plug.esp", "Test.esm"]),
+        ("ACTIVATED: Plug.esp\nACTIVATED: Test.esm\n".into(), Some(0))
+    );
+    assert_eq!(
+        ini(),
+        "[General]\r\nX=1\r\n[Game Files]\r\nGameFile0=Morrowind.esm\r\nGameFile1=Plug.esp\r\nGameFile2=Test.esm\r\n[Archives]\r\nArchive 0=a.bsa\r\n"
+    );
+    assert!(root.join("Morrowind.ini.old").is_file());
+    assert_eq!(
+        run(&["active", "--off", "plug.esp", "Nothing.esp"]),
+        ("DEACTIVATED: plug.esp\n".into(), Some(0))
+    );
+    assert_eq!(
+        ini(),
+        "[General]\r\nX=1\r\n[Game Files]\r\nGameFile0=Morrowind.esm\r\nGameFile1=Test.esm\r\n[Archives]\r\nArchive 0=a.bsa\r\n"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn overdial_topics() {
+    let m = master_esm();
+    let size = m.len() as u64;
+    check(Case {
+        name: "overdial",
+        files: vec![
+            ("Test.esm", m),
+            (
+                "A.esp",
+                plugin(
+                    &[("Test.esm", size)],
+                    None,
+                    &[dial("Balmora", 0), dial("Greeting 1", 1)],
+                ),
+            ),
+            (
+                "B.esp",
+                plugin(
+                    &[("Test.esm", size)],
+                    None,
+                    &[dial("travel to Balmora", 0), dial("Balmorans", 0)],
+                ),
+            ),
+        ],
+        args: vec!["overdial", "A.esp", "B.esp"],
+    });
+}
+
+#[test]
+fn recover_bad_data() {
+    let good = stat("rock_09", "r\\rock9.nif", 0);
+    let mut body = good.clone();
+    body.extend_from_slice(b"\x01\x02junkjunk\xff\xff\xff\xff\x00");
+    body.extend(stat("rock_10", "r\\rock10.nif", 0));
+    body.extend_from_slice(b"\x05\x05\x05more junk");
+    body.extend(gmst("sMaxSale", (b"STRV", b"Max".to_vec())));
+    let mut p = plugin(&[], Some(3), &[]);
+    p.extend(body);
+    for (name, args) in [
+        ("recover", vec!["recover", "Bad.esp"]),
+        ("recover-clean", vec!["recover", "Good.esp"]),
+    ] {
+        check(Case {
+            name,
+            files: vec![
+                ("Bad.esp", p.clone()),
+                ("Good.esp", plugin(&[], None, std::slice::from_ref(&good))),
+            ],
+            args,
+        });
+    }
+}
+
+#[test]
+fn resetdates_bethesda_files() {
+    let mut c = with_master("resetdates", vec![], vec!["resetdates"]);
+    c.files.push(("Morrowind.esm", plugin(&[], None, &[])));
+    c.files.push(("Tribunal.bsa", b"BSA".to_vec()));
+    check(c);
+}
+
+/// The fixtures `tools/gen_all_records.pl` writes: one record of every type tes3cmd knows,
+/// each subrecord packed by tes3cmd's own encoders (`odd_records`: every lookup out of its
+/// table, for the warnings and errors tes3cmd gives then).
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data")
+            .join(name),
+    )
+    .unwrap()
+}
+
+#[test]
+fn dump_every_record_type() {
+    for (name, file) in [
+        ("dump-all", "all_records.esp"),
+        ("dump-odd", "odd_records.esp"),
+    ] {
+        check(Case {
+            name,
+            files: vec![(file, fixture(file))],
+            args: vec!["dump", file],
+        });
+    }
+}
+
+#[test]
+fn dump_selectors() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "dump-list",
+            &["dump", "--list", "all_records.esp", "odd_records.esp"],
+        ),
+        (
+            "dump-type",
+            &[
+                "dump",
+                "--type",
+                "cell",
+                "-B",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+        (
+            "dump-npc",
+            &[
+                "dump",
+                "--type",
+                "npc",
+                "--type",
+                "CREA.NPDT",
+                "all_records.esp",
+            ],
+        ),
+        ("dump-id", &["dump", "--id", "^id", "all_records.esp"]),
+        (
+            "dump-exact-id",
+            &[
+                "dump",
+                "--exact-id",
+                "balmora",
+                "--exact-id",
+                "Test.Room",
+                "all_records.esp",
+            ],
+        ),
+        ("dump-flag", &["dump", "--flag", "p", "all_records.esp"]),
+        (
+            "dump-flag-number",
+            &["dump", "--flag", "0x400", "--list", "all_records.esp"],
+        ),
+        (
+            "dump-match",
+            &["dump", "--match", "Rank:", "all_records.esp"],
+        ),
+        (
+            "dump-no-match",
+            &["dump", "-M", "id", "--list", "all_records.esp"],
+        ),
+        ("dump-interior", &["dump", "--interior", "all_records.esp"]),
+        (
+            "dump-exterior",
+            &["dump", "--exterior", "--type", "BOOK", "all_records.esp"],
+        ),
+        (
+            "dump-instances",
+            &["dump", "--instance-match", "door", "all_records.esp"],
+        ),
+        (
+            "dump-no-instances",
+            &["dump", "--instance-no-match", "rock", "all_records.esp"],
+        ),
+        (
+            "dump-verbose",
+            &["dump", "-v", "--type", "CELL", "all_records.esp"],
+        ),
+        (
+            "dump-bad-type",
+            &["dump", "--type", "ABC", "all_records.esp"],
+        ),
+    ];
+    for (name, args) in cases {
+        check(Case {
+            name,
+            files: vec![
+                ("all_records.esp", fixture("all_records.esp")),
+                ("odd_records.esp", fixture("odd_records.esp")),
+            ],
+            args: args.to_vec(),
+        });
+    }
+}
+
+/// tes3cmd's `unknown_data` dies on 2 or 3 bytes ("Not a SCALAR reference"): the plugin ends
+/// there, the records after it unprinted.
+#[test]
+fn dump_dies_where_tes3cmd_does() {
+    let p = plugin(
+        &[],
+        None,
+        &[
+            stat("rock_01", "r.nif", 0),
+            rec(
+                b"LAND",
+                0,
+                &[sub(b"INTV", &l32(&[1, 2])), sub(b"DATA", &[1, 2])],
+            ),
+            stat("rock_02", "r2.nif", 0),
+        ],
+    );
+    check(Case {
+        name: "dump-dies",
+        files: vec![("Die.esp", p)],
+        args: vec!["dump", "Die.esp"],
+    });
+}
+
+fn both_fixtures(name: &'static str, args: &[&'static str]) -> Case {
+    Case {
+        name,
+        files: vec![
+            ("all_records.esp", fixture("all_records.esp")),
+            ("odd_records.esp", fixture("odd_records.esp")),
+        ],
+        args: args.to_vec(),
+    }
+}
+
+#[test]
+fn delete_records_subrecords_and_instances() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "delete-type",
+            &["delete", "--type", "BOOK", "all_records.esp"],
+        ),
+        (
+            "delete-id",
+            &[
+                "delete",
+                "--id",
+                "^id",
+                "--type",
+                "ACTI",
+                "--type",
+                "CLOT",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "delete-verbose",
+            &["delete", "-v", "--type", "MISC", "all_records.esp"],
+        ),
+        (
+            "delete-subrecords",
+            &[
+                "delete",
+                "--sub-match",
+                "Model",
+                "--type",
+                "ACTI",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "delete-all-subrecords",
+            &[
+                "delete",
+                "--sub-match",
+                ".",
+                "--type",
+                "GLOB",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "delete-instances",
+            &["delete", "--instance-match", "door", "all_records.esp"],
+        ),
+        (
+            "delete-other-instances",
+            &[
+                "delete",
+                "--instance-no-match",
+                "door",
+                "--hide-backups",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "delete-nothing",
+            &[
+                "delete",
+                "--type",
+                "NONE",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+    ];
+    for (name, args) in cases {
+        check(both_fixtures(name, args));
+    }
+}
+
+#[test]
+fn modify_replace() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "modify-global",
+            &[
+                "modify",
+                "--replace",
+                "/model/MODEL/g",
+                "--type",
+                "ACTI",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "modify-groups",
+            &[
+                "modify",
+                "--replace",
+                "/id(.)/X$1Y/",
+                "--sub-match",
+                "Name",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "modify-faction",
+            &[
+                "modify",
+                "--replace",
+                "/Hlaalu/Telvanni/",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "modify-nothing",
+            &["modify", "--replace", "/zzz/y/", "all_records.esp"],
+        ),
+        // Without --replace tes3cmd runs `main($R);`, which nothing defines.
+        (
+            "modify-replacefirst",
+            &[
+                "modify",
+                "--replacefirst",
+                "/x/y/",
+                "--type",
+                "BOOK",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+    ];
+    for (name, args) in cases {
+        check(both_fixtures(name, args));
+    }
+}
+
+#[test]
+fn diff_two_plugins() {
+    let cases: &[(&str, &[&str])] = &[
+        ("diff", &["diff", "all_records.esp", "odd_records.esp"]),
+        (
+            "diff-missing",
+            &["diff", "--e1", "--e2", "all_records.esp", "odd_records.esp"],
+        ),
+        (
+            "diff-equal",
+            &["diff", "--equal", "all_records.esp", "odd_records.esp"],
+        ),
+        (
+            "diff-sorted",
+            &[
+                "diff",
+                "--ne",
+                "--sortsubrecs",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+        (
+            "diff-ignore",
+            &[
+                "diff",
+                "--ignore-type",
+                "BOOK",
+                "--ignore-type",
+                "CELL.AMBI",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+        (
+            "diff-same",
+            &["diff", "-v", "all_records.esp", "all_records.esp"],
+        ),
+    ];
+    for (name, args) in cases {
+        check_with(both_fixtures(name, args), true);
+    }
+}
+
+fn multipatch_case(name: &'static str, args: &[&'static str]) -> Case {
+    let ini = "[General]\r\nX=1\r\n[Game Files]\r\nGameFile0=mp_Master.esm\r\nGameFile1=mp_A.esp\r\nGameFile2=mp_B.esp\r\nGameFile3=mp_C.esp\r\n[Archives]\r\n";
+    Case {
+        name,
+        files: vec![
+            ("Morrowind.ini", ini.as_bytes().to_vec()),
+            ("mp_Master.esm", fixture("mp_Master.esm")),
+            ("mp_A.esp", fixture("mp_A.esp")),
+            ("mp_B.esp", fixture("mp_B.esp")),
+            ("mp_C.esp", fixture("mp_C.esp")),
+        ],
+        args: args.to_vec(),
+    }
+}
+
+/// `multipatch` without activating the patch (tes3cmd dies there, see `active_on_and_off`) and
+/// without its cache (Perl's Storable files; the port keeps none).
+#[test]
+fn multipatch_patches() {
+    let cases: &[(&str, &[&str])] = &[
+        ("multipatch", &["multipatch", "--no-cache", "--no-activate"]),
+        (
+            "multipatch-verbose",
+            &["multipatch", "-v", "--no-cache", "--no-activate"],
+        ),
+        (
+            "multipatch-lists",
+            &[
+                "multipatch",
+                "--merge-lists",
+                "--no-cache",
+                "--no-activate",
+                "--dc",
+                "wolf",
+                "--di",
+                "axe",
+                "-v",
+            ],
+        ),
+        (
+            "multipatch-fog",
+            &["multipatch", "--fogbug", "--no-activate"],
+        ),
+        (
+            "multipatch-names",
+            &[
+                "multipatch",
+                "--cellnames",
+                "--summons-persist",
+                "--no-cache",
+                "--no-activate",
+            ],
+        ),
+        (
+            "multipatch-objects",
+            &["multipatch", "--merge-objects", "--no-activate"],
+        ),
+    ];
+    for (name, args) in cases {
+        check(multipatch_case(name, args));
+    }
+}
+
+/// The patch activated: the port's ini, as `active --on` writes it.
+#[test]
+fn multipatch_activates_the_patch() {
+    let root = std::env::temp_dir().join(format!("t3rs-mp-active-{}", std::process::id()));
+    let data = lay_out(&root, &multipatch_case("mp-active", &[]));
+    let o = Command::new(env!("CARGO_BIN_EXE_tes3cmd"))
+        .args(["multipatch", "--no-cache"])
+        .current_dir(&data)
+        .env("PWD", &data)
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&o.stdout).ends_with("\nACTIVATED: multipatch.esp\n"));
+    let ini = std::fs::read_to_string(root.join("Morrowind.ini")).unwrap();
+    assert!(ini.contains("GameFile4=multipatch.esp\r\n"), "{ini}");
+    assert!(data.join("multipatch.esp").is_file());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `fixit`: tes3cmd 0.40-PRE-RELEASE-2 dies activating the multipatch ("Undefined subroutine
+/// &TES3::Util::move"), before it synchronizes the headers; the port goes on. Up to there both
+/// say and do the same: tes3cmd's output is where the port's starts, and Data Files (the cleaned
+/// plugins, their backups, the multipatch) is the same.
+#[test]
+fn fixit_cleans_patches_and_synchronizes() {
+    let Some(mut theirs) = tes3cmd() else {
+        eprintln!("skipped fixit: no tes3cmd to compare with");
+        return;
+    };
+    let base = std::env::temp_dir().join(format!("t3rs-fixit-{}", std::process::id()));
+    let case = multipatch_case("fixit", &["fixit"]);
+    let (pd, rd) = (base.join("perl"), base.join("rust"));
+    let (pdata, rdata) = (lay_out(&pd, &case), lay_out(&rd, &case));
+    let perl = theirs
+        .arg("fixit")
+        .current_dir(&pdata)
+        .env("PWD", &pdata)
+        .output()
+        .unwrap();
+    let rust = Command::new(env!("CARGO_BIN_EXE_tes3cmd"))
+        .arg("fixit")
+        .current_dir(&rdata)
+        .env("PWD", &rdata)
+        .output()
+        .unwrap();
+    let text = |s: &[u8], dir: &Path| {
+        String::from_utf8_lossy(s).replace(&dir.to_string_lossy().into_owned(), "<ROOT>")
+    };
+    let (po, ro) = (text(&perl.stdout, &pd), text(&rust.stdout, &rd));
+    let pe = unplace(&text(&perl.stderr, &pd))
+        .replace("Undefined subroutine &TES3::Util::move called\n", "");
+    let re = unplace(&text(&rust.stderr, &rd));
+    assert!(ro.starts_with(&po), "--- perl\n{po}\n--- port\n{ro}");
+    assert!(
+        ro[po.len()..].starts_with("\n\nSynchronizing Plugin Headers...\n"),
+        "{}",
+        &ro[po.len()..]
+    );
+    assert_eq!(pe, re);
+    assert_eq!(
+        (perl.status.code(), rust.status.code()),
+        (Some(255), Some(0))
+    );
+    assert_eq!(tree(&pdata), tree(&rdata), "Data Files differ");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn dump_raw_wrap_and_format() {
+    let cases: &[(&str, &[&str])] = &[
+        // --binary and --header set $opt_binary/$opt_header, which dump never reads.
+        (
+            "dump-binary-ignored",
+            &[
+                "dump",
+                "--binary",
+                "--header",
+                "--output",
+                "out.esp",
+                "--type",
+                "BOOK",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "dump-raw",
+            &[
+                "dump",
+                "--raw",
+                "out.esp",
+                "--type",
+                "GMST",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+        (
+            "dump-raw-header",
+            &[
+                "dump",
+                "--raw-with-header",
+                "out.esp",
+                "--instance-match",
+                "door",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "dump-raw-list",
+            &[
+                "dump",
+                "--raw-with-header",
+                "out.esp",
+                "--list",
+                "--type",
+                "ACTI",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+        ("dump-raw-dash", &["dump", "--raw", "-x", "all_records.esp"]),
+        (
+            "dump-wrap",
+            &[
+                "dump",
+                "--wrap",
+                "--type",
+                "BOOK",
+                "--type",
+                "CLAS",
+                "--type",
+                "INFO",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "dump-format",
+            &[
+                "dump",
+                "--format",
+                "%id%_%name%_%weight%",
+                "--type",
+                "ALCH",
+                "--type",
+                "BOOK",
+                "--type",
+                "CELL",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "dump-format-lines",
+            &[
+                "dump",
+                "--format",
+                "X:%NPDT:level%|%model%",
+                "--format",
+                "second:%value%",
+                "--type",
+                "MISC",
+                "--type",
+                "NPC_",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "dump-format-unquoted",
+            &[
+                "dump",
+                "--no-quote",
+                "--format",
+                "%bogus%=%fog_density%=%x%",
+                "--type",
+                "CELL",
+                "--type",
+                "LEVC",
+                "all_records.esp",
+            ],
+        ),
+        (
+            "dump-format-fields",
+            &[
+                "dump",
+                "--format",
+                "%name%:%level%:%clear%:%offset%:%objidx%:%type%:%length%",
+                "all_records.esp",
+                "odd_records.esp",
+            ],
+        ),
+    ];
+    for (name, args) in cases {
+        check(both_fixtures(name, args));
+    }
+    // The appended raw output: an out.esp already there.
+    let mut c = both_fixtures(
+        "dump-raw-append",
+        &[
+            "dump",
+            "--raw",
+            "out.esp",
+            "--type",
+            "BOOK",
+            "all_records.esp",
+        ],
+    );
+    c.files.push(("out.esp", b"EXISTING".to_vec()));
+    check(c);
+}
+
+/// A savegame's record types (`tools/gen_all_records.pl ess`): arrays, equipped indexes and
+/// the subrecords tes3cmd prints as unknown data.
+#[test]
+fn dump_savegame_records() {
+    for (name, args) in [
+        ("dump-ess", vec!["dump", "all_records.ess"]),
+        (
+            "dump-ess-list",
+            vec![
+                "dump",
+                "--list",
+                "--type",
+                "REFR",
+                "--type",
+                "NPCC",
+                "all_records.ess",
+            ],
+        ),
+    ] {
+        check(Case {
+            name,
+            files: vec![("all_records.ess", fixture("all_records.ess"))],
+            args,
+        });
+    }
 }

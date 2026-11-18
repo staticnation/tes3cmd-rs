@@ -32,6 +32,10 @@ impl<'a> Ctx<'a> {
     pub fn print(&mut self, s: &str) {
         let _ = self.out.write_all(s.as_bytes());
     }
+    /// `print` of bytes, as Perl prints a string read from a plugin.
+    pub fn print_bytes(&mut self, b: &[u8]) {
+        let _ = self.out.write_all(b);
+    }
     /// `msg`: a line to standard error.
     pub fn msg(&mut self, s: &str) {
         let _ = writeln!(self.err, "{s}");

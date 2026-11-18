@@ -102,6 +102,11 @@ impl Install {
         i
     }
 
+    /// `datafiles_map(RELOAD)`: Data Files listed again (a file was just made there).
+    pub fn reload(&mut self) {
+        self.listing = None;
+    }
+
     /// `datapath`: a file in Data Files, found in any letter case.
     pub fn datapath(&mut self, name: &str) -> Option<PathBuf> {
         if self.listing.is_none() {

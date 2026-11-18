@@ -11,12 +11,15 @@ with it unchanged, command by command as each is ported.
 
 | Command | |
 |---|---|
-| `clean` | ported, held to the Perl's output (below) |
-| `header`, `esp`/`esm`, `dump`, `delete`, `modify`, `diff`, `common`, `undelete`, `recover` | next, in this order |
-| `multipatch`, `fixit`, `overdial`, `lint`, `active`, `resetdates` | after those |
-| `run`, `shell`, `codec`, `testcodec` | not planned (they run Perl, or test its codecs) |
+| `clean`, `header`, `esp`, `esm`, `common`, `active`, `resetdates`, `overdial`, `recover` | ported, held to the Perl's output (below) |
+| `dump` | ported: every record type a plugin has, the selectors (`--type`, `--id`, `--exact-id`, `--flag`, `--match`, `--no-match`, `--interior`, `--exterior`, `--instance-match`, `--instance-no-match`), `--list`, `-B`, `--format`/`--no-quote`, `--raw`/`--raw-with-header`, `--wrap` (Text::Wrap 2021.0814's own algorithm) |
+| `delete`, `diff` | ported |
+| `modify` | ported: `--replace` (a Perl `s///`: any delimiters, `$1`/`$&`, flags `gimsx`), with the record selectors and `--sub-match`/`--sub-no-match`. Not portable: `--run`, `--program-file` and `/e` run Perl code |
+| `multipatch` | ported: the cell renamings, the fog bug, the summoned creatures' persistence, the leveled lists merged (`--delete-creature`/`--delete-item`), `--no-activate`. `--merge-objects` does nothing, as in tes3cmd |
+| `fixit` | ported: `resetdates`, `clean` on every active plugin, `multipatch`, then every header synchronized |
+| `lint`, `undelete`, `run`, `shell`, `codec`, `testcodec`, `stats`, `wikiout` | not planned: this tes3cmd hides them (`-lint` in its command table), and `run`/`shell` run Perl |
 
-A command not ported yet says so and exits with 2; run the Perl tes3cmd for it.
+A command or option not ported says so and exits with 2; run the Perl tes3cmd for it.
 
 ## Use
 
@@ -37,7 +40,7 @@ grids, broken and unknown records...), lays out a Morrowind folder for each case
 tes3cmd in one copy and this port in another, and compares standard output, standard error and
 every file left behind, byte for byte (Perl's "at FILE line N." suffixes aside).
 
-    TES3CMD_PL=path/to/tes3cmd cargo test             # with Perl and tes3cmd's script
+    TES3CMD_PL=tests/tes3cmd/tes3cmd.pl cargo test    # with Perl and tes3cmd's script (in the repository)
     TES3CMD_EXE=path/to/tes3cmd.exe cargo test        # or with tes3cmd's own program
 
 Your own plugins, the same way: `T3_REAL_MW` is the Morrowind folder, `T3_REAL_PLUGINS` the
@@ -46,10 +49,49 @@ their own and cleaned by both.
 
     T3_REAL_MW="C:\Games\Morrowind" T3_REAL_PLUGINS="Some Mod.esp" TES3CMD_EXE=... cargo test real_plugins -- --nocapture
 
-The record definitions and the evil-GMST tables are generated from the Perl itself
-(`tools/gen_schema.pl`, `tools/gen_evil.pl`, after `tools/prepare_lib.sh`), not copied by hand.
+The record definitions, the evil-GMST tables, every command's options and usage text, and the
+record formatters tes3cmd generates (with every lookup and flag table) are generated from the
+Perl itself (`tools/gen_schema.pl`, `tools/gen_evil.pl`, `tools/gen_commands.pl`,
+`tools/gen_tostr.pl`, after `tools/prepare_lib.sh`), not copied by hand; `tools/check_tostr.pl`
+runs each generated formatter beside the Perl's own (347 of them, all the same). The formatters
+tes3cmd writes by hand are ported in `src/tostr.rs`.
+
+`tests/data/all_records.esp` and `odd_records.esp` hold one record of every type a plugin has,
+and `all_records.ess` every savegame type too, each subrecord packed by tes3cmd's own encoders
+(`tools/gen_all_records.pl`; in `odd`, every lookup out of its table), so `dump` is compared on
+all of them.
+
+CI (`.github/workflows/ci.yml`) checks formatting, Clippy and the tests on Windows, Linux and
+macOS, keeps each system's program, and on Linux runs every case against the released Perl
+(`tests/tes3cmd`) in two time zones.
 
 ## Where it differs, on purpose or for now
+
+- **`active --on` and `--off` work.** The released tes3cmd dies writing `Morrowind.ini`
+  ("Undefined subroutine &TES3::Util::move"), leaving `Morrowind.ini.tmp` and the ini as it was;
+  the port writes the new `[Game Files]` (the old ini kept as `Morrowind.ini.old`), as GitHub's
+  later tes3cmd does. `tests/vs_perl.rs` checks these two on their own.
+- **`diff` warns in a fixed order.** Its report and diff files are tes3cmd's; the warnings it
+  prints while comparing come in record order, where tes3cmd's follow Perl's hash order (which
+  changes from run to run).
+- **`modify --replace` changes the fields of generic subrecords and a reference's owner faction**;
+  tes3cmd also runs it over the fields of a few hand-decoded ones (a reference's position, a
+  cell's coordinates), which the port leaves as they are.
+- **tes3cmd's own `dump` quirks are kept**: `--binary` and `--header` do nothing (they set
+  variables `dump` never reads; `--raw`/`--raw-with-header` are what write records),
+  `--format`'s `TYPE:field` never finds a field (its pattern keeps the type's last letter), a
+  field's subtype is remembered across records, and only the first of its "unknown field"
+  messages is ever said (`msgonce` keys on `{@_}`, which is always 1).
+- **No caches.** tes3cmd keeps Perl `Storable` files in `tes3cmd/cache` (masters, leveled lists);
+  the port reads the plugins each run, and says what tes3cmd says the first time
+  ("Creating Leveled Lists Cache"). With `--no-cache` both read every run.
+- **`multipatch` and `fixit` activate the patch**, where the released tes3cmd dies (the same
+  `move` as `active --on`). So `fixit` goes on to synchronize the headers, which tes3cmd never
+  reaches. There tes3cmd's later code would also give every plugin the multipatch's author
+  ("tes3cmd multipatch", left set by the patch's own header); the port leaves authors alone.
+  `multipatch` lists the cell renamings it keeps in a fixed order (tes3cmd: hash order).
+- **`overdial` lists in a fixed order.** tes3cmd walks Perl hashes, whose order changes from run
+  to run; the port walks the plugins and topics sorted.
 
 - **Records as bytes.** tes3cmd compares and writes subrecords as bytes, and so does this port; it
   does not read plugins through a typed library, which could write some bytes differently.

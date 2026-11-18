@@ -165,3 +165,12 @@ pub fn fix_output(
     }
     Ok(())
 }
+
+/// An I/O error as Perl's `$!` reads: the system's message without Rust's " (os error N)".
+pub fn os_message(e: &std::io::Error) -> String {
+    let s = e.to_string();
+    match s.rfind(" (os error ") {
+        Some(k) => s[..k].to_string(),
+        None => s,
+    }
+}

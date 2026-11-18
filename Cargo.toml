@@ -16,5 +16,7 @@ name = "tes3cmd"
 path = "src/main.rs"
 
 [dependencies]
+# Perl's regexes for the record selectors (--match, --id...), on bytes.
+regex = { version = "1", default-features = false, features = ["std", "perf"] }
 
 [dev-dependencies]

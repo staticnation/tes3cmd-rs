@@ -388,6 +388,20 @@ impl Decoded {
         sub
     }
 
+    /// `tr->id`, undefined (`None`) for a record with no id field.
+    pub fn id_opt(&self) -> Option<String> {
+        match &self.rectype {
+            b"CELL" | b"LAND" | b"PGRD" | b"TES3" | b"FMAP" | b"GAME" | b"PCDT" | b"PROJ"
+            | b"SPLM" | b"VFXM" => Some(self.id()),
+            _ => self.field_id.clone(),
+        }
+    }
+
+    /// `_id_` as decoding left it: the last `id` field, lower case ("" when none).
+    pub fn field_id_str(&self) -> String {
+        self.field_id.clone().unwrap_or_default()
+    }
+
     pub fn get(&self, tag: &[u8; 4]) -> Option<&Sub> {
         self.subs.iter().find(|s| &s.tag == tag)
     }
