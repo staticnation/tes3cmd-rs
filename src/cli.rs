@@ -209,7 +209,7 @@ pub fn glob(word: &str) -> Vec<String> {
             Some(k) => (pat[..=k].to_string(), pat[k + 1..].to_string()),
             None => (String::new(), pat.clone()),
         };
-        let Ok(rd) = std::fs::read_dir(if dir.is_empty() { "." } else { &dir }) else {
+        let Ok(rd) = crate::fsx::read_dir(if dir.is_empty() { "." } else { &dir }) else {
             continue;
         };
         let mut hits: Vec<String> = rd
@@ -256,6 +256,20 @@ fn minihelp(out: &mut dyn Write) {
 }
 
 /// The program: answers its exit code (Perl's 255 for a `die`).
+/// [`run`] as if started in `dir`: the Morrowind folder looked for from there, and relative
+/// plugin names and outputs under it (`fsx`). For a program that runs the port inside itself -
+/// its threads share one process folder, so the folder is named per run instead. The answer,
+/// standard output and standard error are `run`'s, word for word.
+pub fn run_in(
+    dir: &std::path::Path,
+    argv: &[String],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let _run_folder = crate::fsx::enter(dir);
+    run(argv, out, err)
+}
+
 pub fn run(argv: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let debug = argv
         .iter()
@@ -326,7 +340,7 @@ pub fn run(argv: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
                 .into_iter()
                 .filter(|n| lower.contains(&n.to_lowercase()))
                 .map(|n| {
-                    let t = std::fs::metadata(&n)
+                    let t = crate::fsx::metadata(&n)
                         .and_then(|m| m.modified())
                         .unwrap_or(std::time::UNIX_EPOCH);
                     (n, t)
@@ -342,8 +356,8 @@ pub fn run(argv: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         backup_dir: p.last("backup-dir"),
     };
     if let Some(d) = &output.output_dir
-        && !std::path::Path::new(d).is_dir()
-        && std::fs::create_dir_all(d).is_err()
+        && !crate::fsx::at(d).is_dir()
+        && crate::fsx::create_dir_all(d).is_err()
     {
         let _ = writeln!(ctx.err, "FATAL ERROR (): Unable to create directory: {d}");
         return 255;
@@ -564,13 +578,13 @@ fn dispatch(
                 let mut start = Vec::new();
                 if header {
                     start = crate::multipatch::make_header();
-                } else if std::path::Path::new(&path).is_file() {
+                } else if crate::fsx::at(&path).is_file() {
                     ctx.msg(&format!("Appending to: \"{path}\""));
-                    start = std::fs::read(&path).unwrap_or_default();
+                    start = crate::fsx::read(&path).unwrap_or_default();
                 } else {
                     ctx.msg(&format!("Creating: \"{path}\""));
                 }
-                if let Err(e) = std::fs::write(&path, &start) {
+                if let Err(e) = crate::fsx::write(&path, &start) {
                     let _ = writeln!(
                         ctx.err,
                         "FATAL ERROR (): opening \"{path}\" for output ({})",

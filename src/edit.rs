@@ -2,7 +2,6 @@
 //! (its `--replace`; `--run` and `--program-file` run Perl, which a port cannot), and `diff`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::commands::{Rec, Wanted, rec_match};
 use crate::ctx::{Ctx, Res};
@@ -38,13 +37,13 @@ pub fn for_update(
         ));
         return Ok(());
     }
-    if !Path::new(plugin).is_file() {
+    if !crate::fsx::at(plugin).is_file() {
         ctx.msg(&format!(
             "FATAL ERROR ({plugin}): Invalid input file (No such file or directory)"
         ));
         return Ok(());
     }
-    let data = std::fs::read(plugin)
+    let data = crate::fsx::read(plugin)
         .map_err(|e| ctx.abort(&format!("opening \"{plugin}\" for input ({e})")))?;
     let tmp = format!("{plugin}.tmp");
     let mut out = Vec::new();
@@ -56,7 +55,7 @@ pub fn for_update(
             Ok(Some(r)) => r,
             Ok(None) => break,
             Err(e) => {
-                let _ = std::fs::write(&tmp, &out);
+                let _ = crate::fsx::write(&tmp, &out);
                 ctx.msg(&e.0);
                 return Ok(());
             }
@@ -66,7 +65,7 @@ pub fn for_update(
         let outcome = match f(ctx, &mut r) {
             Ok(x) => x,
             Err(m) => {
-                let _ = std::fs::write(&tmp, &out);
+                let _ = crate::fsx::write(&tmp, &out);
                 ctx.msg(&m);
                 return Ok(());
             }
@@ -103,7 +102,7 @@ pub fn for_update(
             }
         }
     }
-    std::fs::write(&tmp, &out)
+    crate::fsx::write(&tmp, &out)
         .map_err(|e| ctx.abort(&format!("opening \"{tmp}\" for output ({e})")))?;
     fix_output(
         ctx,
@@ -594,7 +593,7 @@ fn objects(
     plugin: &str,
 ) -> BTreeMap<String, BTreeMap<String, Decoded>> {
     let mut out: BTreeMap<String, BTreeMap<String, Decoded>> = BTreeMap::new();
-    let data = match std::fs::read(plugin) {
+    let data = match crate::fsx::read(plugin) {
         Ok(d) => d,
         Err(e) => {
             ctx.error(&format!(
@@ -747,7 +746,7 @@ pub fn diff(ctx: &mut Ctx, o: &DiffOptions, st: &mut State, p1: &str, p2: &str) 
             if lines.is_empty() {
                 continue;
             }
-            match std::fs::write(&file, lines.join(&b"\n"[..])) {
+            match crate::fsx::write(&file, lines.join(&b"\n"[..])) {
                 Ok(()) => ctx.print(&format!("Created diff file: {file}\n")),
                 Err(e) => ctx.error(&format!("Opening {file} for output ({e})")),
             }

@@ -4,7 +4,6 @@
 //! are tes3cmd's; so are its quirks, where the port is held to its output (see the notes).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
 
 use crate::ctx::{Abort, Ctx, Res};
 use crate::datadir::Install;
@@ -94,7 +93,7 @@ impl Masters {
             ctx.error(&format!("Master: {esm} not found in <DATADIR>"));
             return;
         };
-        let data = match std::fs::read(&path) {
+        let data = match crate::fsx::read(&path) {
             Ok(d) => d,
             Err(e) => {
                 // open_for_input's abort, caught by the caller's eval.
@@ -523,10 +522,10 @@ pub fn clean_plugin(
         if !has_plugin_ext(plugin) {
             return Err(ctx.abort(&format!("\"{plugin}\" does not end in .esm/.esp/.ess")));
         }
-        if !Path::new(plugin).is_file() {
+        if !crate::fsx::at(plugin).is_file() {
             return Err(ctx.abort("Invalid input file (No such file or directory)"));
         }
-        let data = std::fs::read(plugin)
+        let data = crate::fsx::read(plugin)
             .map_err(|e| ctx.abort(&format!("opening \"{plugin}\" for input ({e})")))?;
         let mut pos = 0;
         let mut expected = Some("TES3");
@@ -592,19 +591,19 @@ pub fn clean_plugin(
     };
     let mut out = Vec::new();
     let mut modified = 0usize;
-    let started = has_plugin_ext(plugin) && Path::new(plugin).is_file();
+    let started = has_plugin_ext(plugin) && crate::fsx::at(plugin).is_file();
     match run(ctx, &mut out, &mut modified, masters, inst) {
         Ok(()) => {}
         Err(e) => {
             // The eval's report; the plugin is left as it was (the partial .tmp too, as tes3cmd leaves it).
             if started {
-                let _ = std::fs::write(&tmp, &out);
+                let _ = crate::fsx::write(&tmp, &out);
             }
             let _ = std::io::Write::write_all(ctx.err, format!("{}\n", e.0).as_bytes());
             return Ok(());
         }
     }
-    std::fs::write(&tmp, &out)
+    crate::fsx::write(&tmp, &out)
         .map_err(|e| ctx.abort(&format!("opening \"{tmp}\" for output ({e})")))?;
     let newname = (!opts.overwrite).then(|| {
         let (dir, file) = split_dir(plugin);

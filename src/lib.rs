@@ -14,6 +14,7 @@ pub mod datadir;
 pub mod decode;
 pub mod edit;
 pub mod evil;
+pub mod fsx;
 pub mod header;
 pub mod multipatch;
 pub mod output;

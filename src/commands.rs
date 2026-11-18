@@ -2,7 +2,6 @@
 //! `common`, `active`, `resetdates`, `overdial` and `recover`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
 
 use crate::ctx::{Abort, Ctx, Res};
 use crate::datadir::Install;
@@ -25,13 +24,15 @@ const ORIGINAL_DATE: &[(&str, i64)] = &[
 const HDR_IGNORED: u32 = 0x1000;
 
 fn times(path: &str) -> Option<(std::time::SystemTime, std::time::SystemTime)> {
-    let m = std::fs::metadata(path).ok()?;
+    let m = crate::fsx::metadata(path).ok()?;
     Some((m.accessed().ok()?, m.modified().ok()?))
 }
 
 fn set_times(path: &str, t: Option<(std::time::SystemTime, std::time::SystemTime)>) {
     if let Some((a, m)) = t
-        && let Ok(f) = std::fs::File::options().write(true).open(path)
+        && let Ok(f) = std::fs::File::options()
+            .write(true)
+            .open(crate::fsx::at(path))
     {
         let _ = f.set_times(std::fs::FileTimes::new().set_accessed(a).set_modified(m));
     }
@@ -40,7 +41,7 @@ fn set_times(path: &str, t: Option<(std::time::SystemTime, std::time::SystemTime
 /// Every record of a plugin as `new_from_input` reads it, the TES3 header first: an error
 /// stops the read and is reported as tes3cmd's `eval` reports it (`err($@)`).
 fn records(ctx: &mut Ctx, plugin: &str) -> Res<Vec<Record>> {
-    let data = std::fs::read(plugin)
+    let data = crate::fsx::read(plugin)
         .map_err(|e| ctx.abort(&format!("opening \"{plugin}\" for input ({e})")))?;
     let mut out = Vec::new();
     let mut pos = 0;
@@ -200,7 +201,7 @@ pub fn update_header(
         return Ok(());
     }
     let t = times(plugin);
-    let mut data = std::fs::read(plugin)
+    let mut data = crate::fsx::read(plugin)
         .map_err(|e| ctx.abort(&format!("opening \"{plugin}\" for read/write ({e})")))?;
     let mut pos = 0;
     let rec = match read_one(ctx, plugin, &data, &mut pos, Some("TES3"), Reader::Input)? {
@@ -262,7 +263,7 @@ pub fn update_header(
                 if let Fields::MasterSize(length) = d.subs[i].fields {
                     match &master {
                         Some(m) => {
-                            let newlen = inst.datapath(&text(m)).and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
+                            let newlen = inst.datapath(&text(m)).and_then(|p| crate::fsx::metadata(p).ok()).map(|m| m.len());
                             if newlen.map(|n| n as f64) != Some(length) {
                                 modified += 1;
                                 update_msg.push_str(&format!(
@@ -315,14 +316,14 @@ pub fn update_header(
     if modified > 0 {
         if !nobackup {
             let backup = unique_backup_name(&o.output, inst, plugin)?;
-            std::fs::copy(plugin, &backup).map_err(|e| {
+            crate::fsx::copy(plugin, &backup).map_err(|e| {
                 ctx.abort(&format!("Error, copy failed {plugin} -> {backup} ({e})"))
             })?;
         }
         let body = d.encode(ctx);
         if body.len() == tes3len {
             data[16..16 + tes3len].copy_from_slice(&body);
-            std::fs::write(plugin, &data)
+            crate::fsx::write(plugin, &data)
                 .map_err(|e| ctx.abort(&format!("opening \"{plugin}\" for read/write ({e})")))?;
         } else {
             return Err(ctx.abort(&format!(
@@ -345,20 +346,20 @@ pub fn esp_esm(ctx: &mut Ctx, input: &str, overwrite: bool) -> Res<()> {
     } else {
         (1u8, 0u8, format!("{}.esp", &input[..input.len() - 4]))
     };
-    if Path::new(&output).is_file() && !overwrite {
+    if crate::fsx::at(&output).is_file() && !overwrite {
         return Err(ctx.abort(&format!(
             "Error, {output} already exists! (Use --overwrite to overwrite)"
         )));
     }
-    std::fs::copy(input, &output)
+    crate::fsx::copy(input, &output)
         .map_err(|e| ctx.abort(&format!("Error, copy failed {input} -> {output} ({e})")))?;
     let fail = |ctx: &mut Ctx, m: String| -> Res<()> {
         // err($@): the croak's message keeps its newline inside the brackets.
         ctx.error(&format!("FATAL ERROR ({}): {m}\n", ctx.plugin));
-        let _ = std::fs::remove_file(&output);
+        let _ = crate::fsx::remove_file(&output);
         Ok(())
     };
-    let mut data = match std::fs::read(&output) {
+    let mut data = match crate::fsx::read(&output) {
         Ok(d) => d,
         Err(e) => {
             return fail(
@@ -388,7 +389,7 @@ pub fn esp_esm(ctx: &mut Ctx, input: &str, overwrite: bool) -> Res<()> {
                 );
             }
             data[28] = new;
-            if let Err(e) = std::fs::write(&output, &data) {
+            if let Err(e) = crate::fsx::write(&output, &data) {
                 return fail(ctx, format!("{output}: Error writing byte ({e})"));
             }
         }
@@ -427,7 +428,7 @@ fn record_ids(ctx: &mut Ctx, plugin: &str) -> Res<HashMap<String, BTreeSet<Strin
 
 /// `cmd_common`: the ids of the smaller plugin found again in the larger, in its order.
 pub fn common(ctx: &mut Ctx, p1: &str, p2: &str) -> Res<()> {
-    let size = |p: &str| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    let size = |p: &str| crate::fsx::metadata(p).map(|m| m.len()).unwrap_or(0);
     let (p1, p2) = if size(p1) > size(p2) {
         (p2, p1)
     } else {
@@ -459,7 +460,7 @@ fn ini_path(inst: &Install) -> String {
 /// `read_gamefiles`.
 fn read_gamefiles(ctx: &mut Ctx, inst: &Install) -> Res<Vec<String>> {
     let ini = ini_path(inst);
-    let raw = std::fs::read(&ini)
+    let raw = crate::fsx::read(&ini)
         .map_err(|e| ctx.abort(&format!("opening \"{ini}\" for input ({e})")))?;
     let text: String = text(&raw).replace("\r\n", "\n");
     let mut out = Vec::new();
@@ -489,7 +490,7 @@ fn read_gamefiles(ctx: &mut Ctx, inst: &Install) -> Res<Vec<String>> {
 /// `Morrowind.ini.old`.
 fn write_gamefiles(ctx: &mut Ctx, inst: &Install, files: &[String]) -> Res<()> {
     let ini = ini_path(inst);
-    let raw = std::fs::read(&ini)
+    let raw = crate::fsx::read(&ini)
         .map_err(|e| ctx.abort(&format!("opening \"{ini}\" for input ({e})")))?;
     let text: String = text(&raw).replace("\r\n", "\n");
     let mut out = String::new();
@@ -515,13 +516,13 @@ fn write_gamefiles(ctx: &mut Ctx, inst: &Install, files: &[String]) -> Res<()> {
     let crlf = out.replace('\n', "\r\n");
     let bytes: Vec<u8> = crlf.chars().map(|c| c as u32 as u8).collect();
     let tmp = format!("{ini}.tmp");
-    std::fs::write(&tmp, bytes)
+    crate::fsx::write(&tmp, bytes)
         .map_err(|e| ctx.abort(&format!("opening \"{tmp}\" for output ({e})")))?;
     let old = format!("{ini}.old");
-    let _ = std::fs::remove_file(&old);
-    std::fs::rename(&ini, &old)
+    let _ = crate::fsx::remove_file(&old);
+    crate::fsx::rename(&ini, &old)
         .map_err(|e| ctx.abort(&format!("Error renaming \"{ini}\" to \"{old}\" ({e})")))?;
-    std::fs::rename(&tmp, &ini)
+    crate::fsx::rename(&tmp, &ini)
         .map_err(|e| ctx.abort(&format!("Error renaming \"{tmp}\" to \"{ini}\" ({e})")))?;
     Ok(())
 }
@@ -625,7 +626,7 @@ pub fn resetdates(ctx: &mut Ctx, inst: &mut Install) -> Res<()> {
             .map(|p| p.to_string_lossy().into_owned());
         let mtime = path
             .as_ref()
-            .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+            .and_then(|p| crate::fsx::metadata(p).and_then(|m| m.modified()).ok())
             .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64);
         if path.is_none() {
@@ -736,10 +737,10 @@ pub fn recover(ctx: &mut Ctx, o: &Output, inst: &mut Install, plugin: &str) -> R
     if !crate::clean::has_plugin_ext(plugin) {
         return Err(ctx.abort(&format!("\"{plugin}\" does not end in .esm/.esp/.ess")));
     }
-    if !Path::new(plugin).is_file() {
+    if !crate::fsx::at(plugin).is_file() {
         return Err(ctx.abort("Invalid input file (No such file or directory)"));
     }
-    let data = std::fs::read(plugin)
+    let data = crate::fsx::read(plugin)
         .map_err(|e| ctx.abort(&format!("opening \"{plugin}\" for input ({e})")))?;
     let tmp = format!("{plugin}.tmp");
     let mut out = Vec::new();
@@ -824,7 +825,7 @@ pub fn recover(ctx: &mut Ctx, o: &Output, inst: &mut Install, plugin: &str) -> R
         if n > 1 {
             ctx.print(&format!("Total bytes lost: {total}\n"));
         }
-        std::fs::write(&tmp, &out)
+        crate::fsx::write(&tmp, &out)
             .map_err(|e| ctx.abort(&format!("opening \"{tmp}\" for output ({e})")))?;
         crate::output::fix_output(
             ctx,
@@ -837,7 +838,7 @@ pub fn recover(ctx: &mut Ctx, o: &Output, inst: &mut Install, plugin: &str) -> R
         )?;
     } else {
         ctx.print(&format!("Unable to recover data from {plugin}\n"));
-        let _ = std::fs::remove_file(&tmp);
+        let _ = crate::fsx::remove_file(&tmp);
     }
     Ok(())
 }
@@ -1039,7 +1040,7 @@ pub struct DumpOptions {
 /// `cmd_dump` (as text: `--binary`, `--format` and `--wrap` are not ported yet).
 pub fn dump(ctx: &mut Ctx, o: &DumpOptions, st: &mut crate::tostr::State, plugin: &str) -> Res<()> {
     let mut banner = (!o.no_banner).then(|| format!("\nPlugin: {plugin}\n"));
-    let data = match std::fs::read(plugin) {
+    let data = match crate::fsx::read(plugin) {
         Ok(d) => d,
         Err(e) => {
             ctx.msg(&format!(
@@ -1085,7 +1086,10 @@ pub fn dump(ctx: &mut Ctx, o: &DumpOptions, st: &mut crate::tostr::State, plugin
                 let mut b = Vec::new();
                 rec.write(&mut b);
                 use std::io::Write as _;
-                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(path) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(crate::fsx::at(path))
+                {
                     let _ = f.write_all(&b);
                 }
             }

@@ -22,7 +22,7 @@ pub struct Install {
 
 /// `list_files`: a folder's names, by their lower case.
 pub fn list_files(dir: &str) -> Option<HashMap<String, String>> {
-    let rd = std::fs::read_dir(if dir.is_empty() { "." } else { dir }).ok()?;
+    let rd = crate::fsx::read_dir(if dir.is_empty() { "." } else { dir }).ok()?;
     let mut m = HashMap::new();
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -34,9 +34,11 @@ pub fn list_files(dir: &str) -> Option<HashMap<String, String>> {
 impl Install {
     /// `find_morrowind`, its folders made as tes3cmd makes them.
     pub fn find(ctx: &mut Ctx) -> Install {
-        let start = std::env::var("PWD")
-            .ok()
-            .filter(|p| Path::new(p).is_dir())
+        // The run's own folder when one was named (`cli::run_in`), else where the process is
+        // (`PWD` first, as Perl's `cwd` sees it).
+        let start = crate::fsx::base()
+            .map(|b| b.to_string_lossy().into_owned())
+            .or_else(|| std::env::var("PWD").ok().filter(|p| Path::new(p).is_dir()))
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
@@ -45,7 +47,7 @@ impl Install {
             .unwrap_or_default();
         let mut dir = start.replace('\\', "/");
         let mut found: Option<(String, String)> = None;
-        while !dir.is_empty() && Path::new(&dir).is_dir() {
+        while !dir.is_empty() && crate::fsx::at(&dir).is_dir() {
             if let Some(files) = list_files(&dir)
                 && let (Some(data), Some(_)) = (files.get("data files"), files.get("morrowind.ini"))
             {
@@ -63,7 +65,7 @@ impl Install {
                 }
                 let t = format!("{mw}/tes3cmd");
                 let cache = format!("{mw}/tes3cmd/cache");
-                let _ = std::fs::create_dir_all(&cache);
+                let _ = crate::fsx::create_dir_all(&cache);
                 Install {
                     mwdir: mw,
                     datadir: data,
@@ -90,8 +92,8 @@ impl Install {
         if ctx.verbose {
             ctx.print(&format!("<DATADIR> is \"{}\"\n", i.datadir));
         }
-        let _ = std::fs::create_dir_all(&i.tes3cmd_dir);
-        if Path::new(&format!("{}/tes3cmd", i.datadir)).is_dir() {
+        let _ = crate::fsx::create_dir_all(&i.tes3cmd_dir);
+        if crate::fsx::at(format!("{}/tes3cmd", i.datadir)).is_dir() {
             ctx.msg(&format!(
                 "[Found old version of tes3cmd directory: {}/tes3cmd]",
                 i.datadir
@@ -122,7 +124,7 @@ impl Install {
         let ini = list_files(&self.mwdir)
             .and_then(|m| m.get("morrowind.ini").cloned())
             .map(|n| format!("{}/{n}", self.mwdir));
-        let Some(ini) = ini.and_then(|p| std::fs::read(p).ok()) else {
+        let Some(ini) = ini.and_then(|p| crate::fsx::read(p).ok()) else {
             return Vec::new();
         };
         let text = String::from_utf8_lossy(&ini).replace("\r\n", "\n");
@@ -145,7 +147,7 @@ impl Install {
         let mut active: Vec<(String, std::time::SystemTime)> = Vec::new();
         for f in files {
             if let Some(p) = self.datapath(&f) {
-                let t = std::fs::metadata(&p)
+                let t = crate::fsx::metadata(&p)
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::UNIX_EPOCH);
                 active.push((f, t));

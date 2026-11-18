@@ -108,7 +108,7 @@ fn packed(ctx: &mut Ctx, rectype: &str, tag: &str, vals: &[Val]) -> Vec<u8> {
 
 /// Every record of a plugin, as `new_from_input` reads it; an error stops the read (`Err`).
 fn read_all(ctx: &mut Ctx, path: &str, name: &str) -> (Vec<Record>, Option<String>) {
-    let data = match std::fs::read(path) {
+    let data = match crate::fsx::read(path) {
         Ok(d) => d,
         Err(e) => {
             return (
@@ -142,7 +142,7 @@ fn load_leveled_lists(
 ) -> BTreeMap<String, BTreeMap<&'static str, BTreeMap<String, Decoded>>> {
     let cache = format!("{}/leveled_lists_data.cache", inst.cache_dir);
     if o.no_cache {
-        let _ = std::fs::remove_file(&cache);
+        let _ = crate::fsx::remove_file(&cache);
     } else {
         ctx.msg("Creating Leveled Lists Cache");
     }
@@ -533,7 +533,7 @@ pub fn multipatch(ctx: &mut Ctx, o: &MultipatchOptions, inst: &mut Install) -> R
         }
         ctx.print_bytes(&summary[0]);
     }
-    std::fs::write(&patch_path, &out)
+    crate::fsx::write(&patch_path, &out)
         .map_err(|e| ctx.abort(&format!("opening \"{patch_path}\" for output ({e})")))?;
     let mut options = Vec::new();
     for (on, name) in [

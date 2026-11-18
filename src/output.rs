@@ -2,7 +2,7 @@
 //! or over it with the original moved to a backup (`<name>~1.esp`, the next free number), in the
 //! backup folder with `--hide-backups`. The output keeps the original's dates.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::ctx::{Ctx, Res};
 use crate::datadir::Install;
@@ -25,7 +25,7 @@ pub fn unique_backup_name(opts: &Output, inst: &Install, plugbak: &str) -> Res<S
             .backup_dir
             .clone()
             .unwrap_or_else(|| inst.backup_dir.clone());
-        if !Path::new(&dir).is_dir() && std::fs::create_dir_all(&dir).is_err() {
+        if !crate::fsx::at(&dir).is_dir() && crate::fsx::create_dir_all(&dir).is_err() {
             return Err(crate::ctx::Abort(format!(
                 "FATAL ERROR (): Unable to make directory: \"{dir}\""
             )));
@@ -42,7 +42,7 @@ pub fn unique_backup_name(opts: &Output, inst: &Install, plugbak: &str) -> Res<S
     if ext_len == 0 {
         return Ok(plugbak);
     }
-    while Path::new(&plugbak).is_file() {
+    while crate::fsx::at(&plugbak).is_file() {
         let ext = plugbak[plugbak.len() - 3..].to_string();
         let stem = &plugbak[..plugbak.len() - 4];
         let (base, n) = match stem.rfind('~') {
@@ -61,7 +61,9 @@ fn abs(p: &str) -> String {
     let full = if pb.is_absolute() {
         pb
     } else {
-        std::env::current_dir().unwrap_or_default().join(pb)
+        crate::fsx::base()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            .join(pb)
     };
     // File::Spec's canonpath: `.` parts and doubled separators go, `..` stays.
     let mut out = PathBuf::new();
@@ -74,7 +76,7 @@ fn abs(p: &str) -> String {
 }
 
 fn times(p: &str) -> Option<std::fs::FileTimes> {
-    let m = std::fs::metadata(p).ok()?;
+    let m = crate::fsx::metadata(p).ok()?;
     Some(
         std::fs::FileTimes::new()
             .set_accessed(m.accessed().ok()?)
@@ -83,18 +85,23 @@ fn times(p: &str) -> Option<std::fs::FileTimes> {
 }
 
 fn set_times(p: &str, t: &Option<std::fs::FileTimes>) {
-    if let (Some(t), Ok(f)) = (t, std::fs::OpenOptions::new().write(true).open(p)) {
+    if let (Some(t), Ok(f)) = (
+        t,
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(crate::fsx::at(p)),
+    ) {
         let _ = f.set_times(*t);
     }
 }
 
 /// tes3cmd's `move`: a rename, or a copy and delete where a rename cannot be done.
 fn mv(from: &str, to: &str) -> std::io::Result<()> {
-    if std::fs::rename(from, to).is_ok() {
+    if crate::fsx::rename(from, to).is_ok() {
         return Ok(());
     }
-    std::fs::copy(from, to)?;
-    std::fs::remove_file(from)
+    crate::fsx::copy(from, to)?;
+    crate::fsx::remove_file(from)
 }
 
 /// `fix_output` with `update_header`'s record count (`header`). `newname`: the output's name, or
@@ -111,7 +118,7 @@ pub fn fix_output(
     let tmp = format!("{plugin}.tmp");
     if !modified {
         ctx.print(&format!("{plugin} was not modified\n"));
-        let _ = std::fs::remove_file(&tmp);
+        let _ = crate::fsx::remove_file(&tmp);
         return Ok(());
     }
     let mut newname = newname;
@@ -132,10 +139,10 @@ pub fn fix_output(
         newname = None;
     }
     let write_header = |ctx: &mut Ctx, path: &str| -> Res<()> {
-        let mut data = std::fs::read(path)
+        let mut data = crate::fsx::read(path)
             .map_err(|e| ctx.abort(&format!("opening \"{path}\" for read/write ({e})")))?;
         header(ctx, path, &mut data)?;
-        std::fs::write(path, &data)
+        crate::fsx::write(path, &data)
             .map_err(|e| ctx.abort(&format!("opening \"{path}\" for read/write ({e})")))
     };
     match newname {

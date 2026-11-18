@@ -33,6 +33,11 @@ As tes3cmd: run it from somewhere under the Morrowind folder (it finds `Data Fil
 `tes3cmd help` lists what is ported. `tes3cmd clean --help` (or any wrong option) prints
 tes3cmd's own usage for clean.
 
+As a library, `tes3cmd::cli::run(argv, out, err)` is the command line with its output in two
+writers, and `tes3cmd::cli::run_in(dir, argv, out, err)` the same as if started in `dir`: for a
+program that runs it inside itself, whose threads share one working folder (Wraithguard's Tools
+page). Both answer the exit code; neither exits the process.
+
 ## How it is held to tes3cmd
 
 `tests/vs_perl.rs` builds plugins (masters, cells with references, evil GMSTs, junk cells, path
