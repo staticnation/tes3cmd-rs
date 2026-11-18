@@ -64,9 +64,15 @@ fn run_in_is_the_program_started_there() {
         let b = lay_out(&base.join(format!("{i}b")));
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = tes3cmd::cli::run_in(&b, &args, &mut out, &mut err);
+        // tes3cmd says a path with `/` on Windows too (`find_morrowind`): both spellings.
+        let (sa, sb) = (
+            a.to_string_lossy().into_owned(),
+            b.to_string_lossy().into_owned(),
+        );
         let show = |v: &[u8]| {
             String::from_utf8_lossy(v)
-                .replace(&b.to_string_lossy().to_string(), &a.to_string_lossy())
+                .replace(&sb, &sa)
+                .replace(&sb.replace('\\', "/"), &sa.replace('\\', "/"))
         };
         assert_eq!(o.status.code().unwrap(), code, "{args:?}: exit code");
         assert_eq!(

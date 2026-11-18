@@ -126,7 +126,12 @@ fn run_over_reads_masters_in_place_and_never_writes_them() {
             a.parent().unwrap().to_string_lossy().into_owned(),
             b.parent().unwrap().to_string_lossy().into_owned(),
         );
-        let show = |v: &[u8]| String::from_utf8_lossy(v).replace(&rb, &ra);
+        // tes3cmd says a path with `/` on Windows too (`find_morrowind`): both spellings.
+        let show = |v: &[u8]| {
+            String::from_utf8_lossy(v)
+                .replace(&rb, &ra)
+                .replace(&rb.replace('\\', "/"), &ra.replace('\\', "/"))
+        };
         assert_eq!(o.status.code().unwrap(), code, "{args:?}: exit code");
         assert_eq!(
             String::from_utf8_lossy(&o.stdout),
